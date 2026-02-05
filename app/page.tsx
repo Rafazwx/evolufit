@@ -4,7 +4,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { auth, db, storage } from "../firebase"; 
 import { 
-  signInWithPopup, // <--- MUDANÇA: Agora usamos Popup
+  signInWithPopup, 
   GoogleAuthProvider, 
   signOut, 
   onAuthStateChanged, 
@@ -22,13 +22,14 @@ import {
   updateDoc, 
   arrayUnion, 
   arrayRemove,
-  Timestamp 
+  Timestamp,
+  getDoc
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { 
   Trash2, Heart, MessageCircle, LogOut, Plus, 
   Trophy, MessageSquare, 
-  LayoutList, X, Clock, MapPin, Flame, Send, Camera, AtSign, Bell, BellRing, AlignLeft, Calendar, ArrowLeft, AlertTriangle
+  LayoutList, X, Clock, MapPin, Flame, Send, Camera, AtSign, Bell, BellRing, AlignLeft, Calendar, ArrowLeft, AlertTriangle, Pencil, Smile
 } from "lucide-react";
 
 import WeeklyChart from "./graficos/weeklychart";
@@ -60,6 +61,7 @@ interface ChatMessage {
   userName: string;
   userPhoto: string;
   createdAt: any;
+  reactions?: Record<string, string[]>; // { "❤️": ["uid1", "uid2"] }
 }
 
 interface RankingItem {
@@ -77,9 +79,12 @@ export default function Home() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [image, setImage] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
-  const [isLoggingIn, setIsLoggingIn] = useState(false); // Estado para o botão de login
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
   
-  // Inputs do Modal
+  // --- Estados de Edição (Novo) ---
+  const [editingPost, setEditingPost] = useState<Post | null>(null);
+  
+  // Inputs do Modal (Upload e Edição)
   const [duration, setDuration] = useState("");
   const [calories, setCalories] = useState("");
   const [distance, setDistance] = useState("");
@@ -90,13 +95,16 @@ export default function Home() {
   const [commentText, setCommentText] = useState<Record<string, string>>({});
   const [chatInput, setChatInput] = useState("");
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  
+  // Estado para controlar qual mensagem está com menu de reações aberto
+  const [activeReactionMsg, setActiveReactionMsg] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [screen, setScreen] = useState<"feed" | "ranking" | "chat">("feed");
 
   // --- Inicializar Data/Hora ---
   useEffect(() => {
-    if (image) {
+    if (image && !editingPost) {
       const now = new Date();
       const yyyy = now.getFullYear();
       const mm = String(now.getMonth() + 1).padStart(2, '0');
@@ -107,20 +115,16 @@ export default function Home() {
       const min = String(now.getMinutes()).padStart(2, '0');
       setSelectedTime(`${hh}:${min}`);
     }
-  }, [image]);
+  }, [image, editingPost]);
 
-  // --- Auth & Notificações ---
+  // --- Auth ---
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
       setUser(u);
       setIsAuthChecking(false); 
     });
-
     if (typeof window !== "undefined" && "Notification" in window) {
       if (Notification.permission === "granted") setNotificationsEnabled(true);
-    }
-    if (typeof window !== "undefined" && 'serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch((err) => console.log('Erro SW:', err));
     }
     return () => unsub();
   }, []);
@@ -147,76 +151,106 @@ export default function Home() {
     }
   }, [screen]);
 
-  // --- LOGIN COM POPUP (SOLUÇÃO IPHONE) ---
   const handleLogin = async () => {
     setLoginError(""); 
     setIsLoggingIn(true);
     const provider = new GoogleAuthProvider();
-    
     try {
       await signInWithPopup(auth, provider);
-      // Se der certo, o onAuthStateChanged vai pegar o usuário e mudar a tela
     } catch (error: any) {
       console.error("Erro no Login:", error);
-      
-      // Traduzindo erros comuns para o usuário
-      let msg = "Erro ao fazer login. Tente novamente.";
-      if (error.code === 'auth/popup-blocked') msg = "O navegador bloqueou o popup. Permita popups para entrar.";
-      if (error.code === 'auth/popup-closed-by-user') msg = "Você fechou a janela antes de terminar o login.";
-      if (error.code === 'auth/cancelled-popup-request') msg = "Muitas tentativas. Espere um pouco.";
-      if (error.code === 'auth/network-request-failed') msg = "Sem internet. Verifique sua conexão.";
-      
+      let msg = "Erro ao fazer login.";
+      if (error.code === 'auth/popup-blocked') msg = "Popup bloqueado. Permita popups.";
       setLoginError(msg);
       setIsLoggingIn(false);
     }
   };
 
-  // --- Upload ---
-  const handleUpload = async () => {
-    if (!image || !user) return;
+  // --- Upload / Edição ---
+  const handleSavePost = async () => {
+    if (!user) return;
     setLoading(true);
-    try {
-      const storageRef = ref(storage, `posts/${Date.now()}-${image.name}`);
-      await uploadBytes(storageRef, image);
-      const url = await getDownloadURL(storageRef);
-      
-      const startComments = initialComment.trim() 
-        ? [{ userName: user.displayName || "Atleta", text: initialComment.trim() }] 
-        : [];
 
+    try {
       let finalDate = new Date();
       if (selectedDate && selectedTime) {
         finalDate = new Date(`${selectedDate}T${selectedTime}`);
       }
 
-      await addDoc(collection(db, "posts"), {
-        imageUrl: url, 
-        userId: user.uid, 
-        userName: user.displayName || "Atleta",
-        userPhoto: user.photoURL || "", 
-        likes: [], 
-        comments: startComments,
-        duration: duration || "",
-        calories: calories || "",
-        distance: distance || "",
-        createdAt: Timestamp.fromDate(finalDate), 
-      });
-      
+      // 1. MODO EDIÇÃO
+      if (editingPost) {
+        const postRef = doc(db, "posts", editingPost.id);
+        await updateDoc(postRef, {
+           duration: duration || "",
+           calories: calories || "",
+           distance: distance || "",
+           createdAt: Timestamp.fromDate(finalDate),
+           // Nota: Não editamos a foto ou comentários iniciais na edição simples
+        });
+        setEditingPost(null); // Fecha modal
+      } 
+      // 2. MODO UPLOAD (Novo Post)
+      else if (image) {
+        const storageRef = ref(storage, `posts/${Date.now()}-${image.name}`);
+        await uploadBytes(storageRef, image);
+        const url = await getDownloadURL(storageRef);
+        
+        const startComments = initialComment.trim() 
+          ? [{ userName: user.displayName || "Atleta", text: initialComment.trim() }] 
+          : [];
+
+        await addDoc(collection(db, "posts"), {
+          imageUrl: url, 
+          userId: user.uid, 
+          userName: user.displayName || "Atleta",
+          userPhoto: user.photoURL || "", 
+          likes: [], 
+          comments: startComments,
+          duration: duration || "",
+          calories: calories || "",
+          distance: distance || "",
+          createdAt: Timestamp.fromDate(finalDate), 
+        });
+        if (notificationsEnabled) new Notification("EvoFit", { body: "Treino registrado! 🔥" });
+      }
+
       clearModal();
-      if (notificationsEnabled) new Notification("EvoFit", { body: "Treino registrado! 🔥" });
 
     } catch (e) { console.error(e); }
     setLoading(false);
   };
 
+  // Prepara o modal para editar
+  const openEditModal = (post: Post) => {
+    setEditingPost(post);
+    setDuration(post.duration || "");
+    setCalories(post.calories || "");
+    setDistance(post.distance || "");
+    
+    // Converte Timestamp para input date/time
+    if (post.createdAt?.toDate) {
+      const dateObj = post.createdAt.toDate();
+      const yyyy = dateObj.getFullYear();
+      const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
+      const dd = String(dateObj.getDate()).padStart(2, '0');
+      setSelectedDate(`${yyyy}-${mm}-${dd}`);
+
+      const hh = String(dateObj.getHours()).padStart(2, '0');
+      const min = String(dateObj.getMinutes()).padStart(2, '0');
+      setSelectedTime(`${hh}:${min}`);
+    }
+  };
+
   const clearModal = () => {
       setImage(null);
+      setEditingPost(null);
       setDuration("");
       setCalories("");
       setDistance("");
       setInitialComment("");
   }
 
+  // --- Funções do Chat (Delete e Reação) ---
   const handleSendMessage = async () => {
     if (!chatInput.trim() || !user) return;
     try {
@@ -225,10 +259,38 @@ export default function Home() {
         userId: user.uid,
         userName: user.displayName,
         userPhoto: user.photoURL,
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp(),
+        reactions: {}
       });
       setChatInput("");
     } catch (e) { console.error(e); }
+  };
+
+  const handleDeleteMessage = async (msgId: string) => {
+    if (confirm("Apagar mensagem?")) {
+      await deleteDoc(doc(db, "messages", msgId));
+    }
+  };
+
+  const handleReaction = async (msg: ChatMessage, emoji: string) => {
+    if (!user) return;
+    const msgRef = doc(db, "messages", msg.id);
+    const currentReactions = msg.reactions || {};
+    const userList = currentReactions[emoji] || [];
+
+    let newReactions = { ...currentReactions };
+
+    if (userList.includes(user.uid)) {
+      // Remove reação se já existe
+      newReactions[emoji] = userList.filter(id => id !== user.uid);
+      if (newReactions[emoji].length === 0) delete newReactions[emoji];
+    } else {
+      // Adiciona reação
+      newReactions[emoji] = [...userList, user.uid];
+    }
+
+    await updateDoc(msgRef, { reactions: newReactions });
+    setActiveReactionMsg(null); // Fecha menu
   };
 
   const requestNotification = async () => {
@@ -266,7 +328,6 @@ export default function Home() {
       <h1 className="text-2xl font-bold mb-2 text-center">Bem-vindo ao Desafio</h1>
       <p className="text-zinc-400 text-center mb-8 text-sm px-4">Junte-se aos seus amigos e alcance a sua melhor versão em 2026.</p>
       
-      {/* --- CAIXA DE ERRO --- */}
       {loginError && (
         <div className="bg-red-500/10 border border-red-500/50 p-4 rounded-xl mb-6 flex items-start gap-3 w-full">
            <AlertTriangle className="text-red-500 shrink-0" size={20} />
@@ -331,7 +392,7 @@ export default function Home() {
                       <img src={post.userPhoto} className="w-8 h-8 rounded-full" alt="User" />
                       <div>
                           <p className="font-bold text-sm text-white leading-none">{post.userName}</p>
-                          <div className="flex items-center gap-3 mt-1.5">
+                          <div className="flex items-center gap-3 mt-1.5 flex-wrap">
                             <div className="flex items-center gap-1 text-zinc-400">
                               <Calendar size={10} />
                               <p className="text-[10px]">
@@ -340,11 +401,21 @@ export default function Home() {
                                   : "Hoje"}
                               </p>
                             </div>
-                            {post.duration && (<div className="flex items-center gap-1 text-zinc-400"><Clock size={10} /><p className="text-[10px]">{post.duration}</p></div>)}
+                            {post.duration && (<div className="flex items-center gap-1 text-zinc-400 border-l border-zinc-700 pl-2 ml-1"><Clock size={10} /><p className="text-[10px]">{post.duration}</p></div>)}
+                            {/* CORREÇÃO 1: Mostrar Calorias e Distância no Feed */}
+                            {post.calories && (<div className="flex items-center gap-1 text-orange-400 border-l border-zinc-700 pl-2 ml-1"><Flame size={10} /><p className="text-[10px]">{post.calories}cal</p></div>)}
+                            {post.distance && (<div className="flex items-center gap-1 text-blue-400 border-l border-zinc-700 pl-2 ml-1"><MapPin size={10} /><p className="text-[10px]">{post.distance}</p></div>)}
                           </div>
                       </div>
                     </div>
-                    {post.userId === user.uid && (<button onClick={() => deleteDoc(doc(db, "posts", post.id))}><Trash2 size={16} className="text-zinc-600 hover:text-red-500"/></button>)}
+                    {/* Botões do Dono do Post */}
+                    {post.userId === user.uid && (
+                        <div className="flex items-center gap-2">
+                            {/* CORREÇÃO 2: Botão de Editar */}
+                            <button onClick={() => openEditModal(post)} className="bg-zinc-800 p-1.5 rounded-full text-zinc-400 hover:text-white"><Pencil size={14} /></button>
+                            <button onClick={() => deleteDoc(doc(db, "posts", post.id))} className="bg-zinc-800 p-1.5 rounded-full text-zinc-400 hover:text-red-500"><Trash2 size={14} /></button>
+                        </div>
+                    )}
                   </div>
                   <img src={post.imageUrl} className="w-full aspect-square object-cover bg-zinc-950" alt="Treino" />
                   <div className="p-3">
@@ -379,7 +450,52 @@ export default function Home() {
       {screen === "chat" && (
         <div className="flex-1 flex flex-col h-[100dvh] bg-black relative"> 
            <header className="p-4 border-b border-zinc-900 flex items-center gap-4 bg-black z-20"><button onClick={() => setScreen("feed")}><ArrowLeft size={24} className="text-zinc-400" /></button><div className="flex-1"><h2 className="font-bold text-sm text-white">Comunidade EvoFit</h2><p className="text-[10px] text-green-500 flex items-center gap-1">● Online</p></div></header>
-           <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-40">{messages.length === 0 && (<div className="h-full flex flex-col items-center justify-center text-zinc-700 gap-2 opacity-50"><MessageSquare size={48} /><p className="text-xs">O chat está silencioso...</p></div>)}{messages.map((msg) => (<div key={msg.id} className={`flex items-start gap-3 ${msg.userId === user.uid ? 'flex-row-reverse' : ''}`}><img src={msg.userPhoto} className="w-8 h-8 rounded-full border border-zinc-800" alt="User" /><div className={`rounded-2xl p-3 max-w-[75%] ${msg.userId === user.uid ? 'bg-green-600 text-white rounded-tr-none' : 'bg-zinc-800 text-zinc-200 rounded-tl-none'}`}><p className={`text-[10px] font-bold mb-1 ${msg.userId === user.uid ? 'text-green-200' : 'text-zinc-400'}`}>{msg.userName}</p><p className="text-sm leading-tight">{msg.text}</p></div></div>))}<div ref={messagesEndRef} /></div>
+           <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-40">
+             {messages.length === 0 && (<div className="h-full flex flex-col items-center justify-center text-zinc-700 gap-2 opacity-50"><MessageSquare size={48} /><p className="text-xs">O chat está silencioso...</p></div>)}
+             {messages.map((msg) => (
+                <div key={msg.id} className={`flex items-start gap-3 relative group ${msg.userId === user.uid ? 'flex-row-reverse' : ''}`}>
+                   <img src={msg.userPhoto} className="w-8 h-8 rounded-full border border-zinc-800" alt="User" />
+                   
+                   <div className="relative">
+                     {/* Bolha da Mensagem */}
+                     <div 
+                        onClick={() => setActiveReactionMsg(activeReactionMsg === msg.id ? null : msg.id)}
+                        className={`rounded-2xl p-3 max-w-[240px] cursor-pointer ${msg.userId === user.uid ? 'bg-green-600 text-white rounded-tr-none' : 'bg-zinc-800 text-zinc-200 rounded-tl-none'}`}
+                     >
+                        <p className={`text-[10px] font-bold mb-1 ${msg.userId === user.uid ? 'text-green-200' : 'text-zinc-400'}`}>{msg.userName}</p>
+                        <p className="text-sm leading-tight break-words">{msg.text}</p>
+                     </div>
+
+                     {/* Reações Abaixo da Mensagem */}
+                     {msg.reactions && Object.keys(msg.reactions).length > 0 && (
+                        <div className={`absolute -bottom-4 flex gap-1 ${msg.userId === user.uid ? 'right-0' : 'left-0'}`}>
+                           {Object.entries(msg.reactions).map(([emoji, users]) => (
+                             <span key={emoji} className="bg-zinc-900 border border-zinc-800 text-[10px] px-1.5 py-0.5 rounded-full flex items-center gap-1 shadow-sm">
+                               {emoji} <span className="text-zinc-500">{users.length}</span>
+                             </span>
+                           ))}
+                        </div>
+                     )}
+                     
+                     {/* CORREÇÃO 3: Lixeira e Menu de Reação */}
+                     {activeReactionMsg === msg.id && (
+                       <div className={`absolute -top-10 flex items-center gap-2 bg-zinc-900 border border-zinc-700 p-1.5 rounded-full shadow-xl z-10 ${msg.userId === user.uid ? 'right-0' : 'left-0'}`}>
+                          {["❤️", "😂", "👍", "🔥"].map(emoji => (
+                             <button key={emoji} onClick={(e) => { e.stopPropagation(); handleReaction(msg, emoji); }} className="hover:scale-125 transition text-sm">{emoji}</button>
+                          ))}
+                          {msg.userId === user.uid && (
+                             <button onClick={(e) => { e.stopPropagation(); handleDeleteMessage(msg.id); }} className="ml-2 border-l border-zinc-700 pl-2 text-zinc-500 hover:text-red-500">
+                               <Trash2 size={14} />
+                             </button>
+                          )}
+                       </div>
+                     )}
+                   </div>
+                </div>
+             ))}
+             <div ref={messagesEndRef} />
+           </div>
+           
            <div className="absolute bottom-20 left-0 w-full p-3 bg-black border-t border-zinc-900 z-30"><div className="bg-zinc-900 rounded-full flex items-center px-4 py-3 border border-zinc-800 focus-within:border-green-500 transition gap-2"><button className="text-zinc-500 hover:text-white"><Camera size={20} /></button><input className="bg-transparent flex-1 outline-none text-sm text-white placeholder-zinc-500" placeholder="Enviar mensagem..." value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}/><button className="text-zinc-500 hover:text-white"><AtSign size={20} /></button><button onClick={handleSendMessage} className={`${chatInput.trim() ? 'text-green-500' : 'text-zinc-600'} transition-colors`}><Send size={20} /></button></div></div>
         </div>
       )}
@@ -391,17 +507,22 @@ export default function Home() {
         <button onClick={() => setScreen("chat")} className={`flex flex-col items-center gap-1 transition ${screen === 'chat' ? 'text-green-500' : 'text-zinc-600'}`}><MessageSquare size={22} /><span className="text-[10px] font-medium">Chat</span></button>
       </nav>
 
-      {/* --- MODAL DE UPLOAD --- */}
-      {image && (
+      {/* --- MODAL DE UPLOAD OU EDIÇÃO --- */}
+      {(image || editingPost) && (
         <div className="fixed inset-0 bg-black/95 backdrop-blur-md flex items-end justify-center z-[100]">
           <div className="bg-zinc-900 w-full max-w-md rounded-t-3xl p-6 border-t border-zinc-800 shadow-2xl animate-slide-up overflow-y-auto max-h-[90vh]">
             <div className="flex justify-between items-center mb-6">
-              <h3 className="text-green-500 font-black text-xl tracking-wider uppercase italic">Confirmar Treino</h3>
+              <h3 className="text-green-500 font-black text-xl tracking-wider uppercase italic">{editingPost ? "Editar Treino" : "Confirmar Treino"}</h3>
               <button onClick={clearModal} className="bg-zinc-800 p-2 rounded-full text-zinc-400 hover:text-white hover:bg-zinc-700 transition"><X size={20} /></button>
             </div>
 
+            {/* Preview da Imagem (Só aparece no upload ou se o post tiver imagem) */}
             <div className="relative mb-6 rounded-2xl overflow-hidden border-2 border-zinc-800 shadow-lg aspect-square max-h-56 mx-auto group">
-              <img src={URL.createObjectURL(image)} className="w-full h-full object-cover" alt="Preview" />
+              <img 
+                 src={image ? URL.createObjectURL(image) : editingPost?.imageUrl} 
+                 className="w-full h-full object-cover" 
+                 alt="Preview" 
+              />
               <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent"></div>
             </div>
             
@@ -432,15 +553,18 @@ export default function Home() {
                       <div className="flex-1"><label className="text-zinc-500 text-[10px] uppercase font-bold block mb-0.5">Distância</label><input type="text" placeholder="Ex: 5km" className="w-full bg-transparent text-white text-sm outline-none placeholder-zinc-600" value={distance} onChange={(e) => setDistance(e.target.value)}/></div>
                   </div>
                </div>
-
-               <div className="bg-black/50 p-3 rounded-xl border border-zinc-800 flex gap-3 focus-within:border-green-500 transition items-start">
-                  <AlignLeft size={18} className="text-zinc-500 mt-1" />
-                  <div className="flex-1"><label className="text-zinc-500 text-[10px] uppercase font-bold block mb-0.5">Descrição</label><textarea placeholder="Como foi o treino hoje?" rows={3} className="w-full bg-transparent text-white text-sm outline-none placeholder-zinc-600 resize-none custom-scrollbar" value={initialComment} onChange={(e) => setInitialComment(e.target.value)}/></div>
-               </div>
+               
+               {/* Campo de descrição some na edição para simplificar, já que seria complexo editar array de comentários */}
+               {!editingPost && (
+                 <div className="bg-black/50 p-3 rounded-xl border border-zinc-800 flex gap-3 focus-within:border-green-500 transition items-start">
+                    <AlignLeft size={18} className="text-zinc-500 mt-1" />
+                    <div className="flex-1"><label className="text-zinc-500 text-[10px] uppercase font-bold block mb-0.5">Descrição</label><textarea placeholder="Como foi o treino hoje?" rows={3} className="w-full bg-transparent text-white text-sm outline-none placeholder-zinc-600 resize-none custom-scrollbar" value={initialComment} onChange={(e) => setInitialComment(e.target.value)}/></div>
+                 </div>
+               )}
             </div>
 
-            <button onClick={handleUpload} disabled={loading} className="w-full bg-green-500 py-4 rounded-xl font-black text-black text-lg uppercase tracking-wider hover:bg-green-400 transition shadow-lg shadow-green-500/20 disabled:opacity-50 flex items-center justify-center gap-2 mb-6">
-               {loading ? "Enviando..." : <>Postar Agora <Flame size={20} fill="black" /></>}
+            <button onClick={handleSavePost} disabled={loading} className="w-full bg-green-500 py-4 rounded-xl font-black text-black text-lg uppercase tracking-wider hover:bg-green-400 transition shadow-lg shadow-green-500/20 disabled:opacity-50 flex items-center justify-center gap-2 mb-6">
+               {loading ? "Salvando..." : <>{editingPost ? "Atualizar Treino" : "Postar Agora"} <Flame size={20} fill="black" /></>}
             </button>
 
           </div>
