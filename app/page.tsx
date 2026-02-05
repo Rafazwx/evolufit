@@ -4,8 +4,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { auth, db, storage } from "../firebase"; 
 import { 
-  signInWithRedirect, 
-  getRedirectResult, // <--- IMPORTANTE: Para pegar o erro do login
+  signInWithPopup, // <--- MUDANÇA: Agora usamos Popup
   GoogleAuthProvider, 
   signOut, 
   onAuthStateChanged, 
@@ -72,12 +71,13 @@ interface RankingItem {
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthChecking, setIsAuthChecking] = useState(true); 
-  const [loginError, setLoginError] = useState(""); // <--- Estado para guardar o erro
+  const [loginError, setLoginError] = useState(""); 
   
   const [posts, setPosts] = useState<Post[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [image, setImage] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
+  const [isLoggingIn, setIsLoggingIn] = useState(false); // Estado para o botão de login
   
   // Inputs do Modal
   const [duration, setDuration] = useState("");
@@ -109,30 +109,11 @@ export default function Home() {
     }
   }, [image]);
 
-  // --- Auth & Notificações & Debug de Erro ---
+  // --- Auth & Notificações ---
   useEffect(() => {
-    // 1. Tenta pegar o resultado do redirecionamento (Isso pega erros do Google)
-    getRedirectResult(auth)
-      .then((result) => {
-        if (result) {
-          console.log("Login com sucesso via Redirect:", result.user);
-        }
-      })
-      .catch((error) => {
-        console.error("Erro no Redirect:", error);
-        setLoginError(error.message); // Mostra o erro na tela
-        setIsAuthChecking(false); // Para de carregar se der erro
-      });
-
-    // 2. Oporteiro padrão do Firebase
     const unsub = onAuthStateChanged(auth, (u) => {
       setUser(u);
-      // Só para de carregar se já tiver usuário ou se NÃO estivermos processando um redirect
-      // (Demos um pequeno delay para garantir)
-      setTimeout(() => {
-         if (!u && !loginError) setIsAuthChecking(false);
-         if (u) setIsAuthChecking(false);
-      }, 1000);
+      setIsAuthChecking(false); 
     });
 
     if (typeof window !== "undefined" && "Notification" in window) {
@@ -142,7 +123,7 @@ export default function Home() {
       navigator.serviceWorker.register('/sw.js').catch((err) => console.log('Erro SW:', err));
     }
     return () => unsub();
-  }, [loginError]);
+  }, []);
 
   // --- Monitorar Posts ---
   useEffect(() => {
@@ -166,11 +147,28 @@ export default function Home() {
     }
   }, [screen]);
 
-  const handleLogin = () => {
-    setLoginError(""); // Limpa erros antigos
-    setIsAuthChecking(true); // Mostra carregando
+  // --- LOGIN COM POPUP (SOLUÇÃO IPHONE) ---
+  const handleLogin = async () => {
+    setLoginError(""); 
+    setIsLoggingIn(true);
     const provider = new GoogleAuthProvider();
-    signInWithRedirect(auth, provider);
+    
+    try {
+      await signInWithPopup(auth, provider);
+      // Se der certo, o onAuthStateChanged vai pegar o usuário e mudar a tela
+    } catch (error: any) {
+      console.error("Erro no Login:", error);
+      
+      // Traduzindo erros comuns para o usuário
+      let msg = "Erro ao fazer login. Tente novamente.";
+      if (error.code === 'auth/popup-blocked') msg = "O navegador bloqueou o popup. Permita popups para entrar.";
+      if (error.code === 'auth/popup-closed-by-user') msg = "Você fechou a janela antes de terminar o login.";
+      if (error.code === 'auth/cancelled-popup-request') msg = "Muitas tentativas. Espere um pouco.";
+      if (error.code === 'auth/network-request-failed') msg = "Sem internet. Verifique sua conexão.";
+      
+      setLoginError(msg);
+      setIsLoggingIn(false);
+    }
   };
 
   // --- Upload ---
@@ -268,7 +266,7 @@ export default function Home() {
       <h1 className="text-2xl font-bold mb-2 text-center">Bem-vindo ao Desafio</h1>
       <p className="text-zinc-400 text-center mb-8 text-sm px-4">Junte-se aos seus amigos e alcance a sua melhor versão em 2026.</p>
       
-      {/* --- CAIXA DE ERRO (NOVO) --- */}
+      {/* --- CAIXA DE ERRO --- */}
       {loginError && (
         <div className="bg-red-500/10 border border-red-500/50 p-4 rounded-xl mb-6 flex items-start gap-3 w-full">
            <AlertTriangle className="text-red-500 shrink-0" size={20} />
@@ -276,7 +274,13 @@ export default function Home() {
         </div>
       )}
 
-      <button onClick={handleLogin} className="bg-white text-black w-full py-4 rounded-full font-bold text-sm shadow-lg hover:bg-zinc-200 transition">Entrar com Google</button>
+      <button 
+        onClick={handleLogin} 
+        disabled={isLoggingIn}
+        className="bg-white text-black w-full py-4 rounded-full font-bold text-sm shadow-lg hover:bg-zinc-200 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+      >
+        {isLoggingIn ? "Abrindo Google..." : "Entrar com Google"}
+      </button>
     </div>
   );
 
