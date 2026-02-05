@@ -1,11 +1,10 @@
-
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { auth, db, storage } from "../firebase";
+import { auth, db, storage } from "../firebase"; // Certifique-se que o caminho está certo
 import { 
-  signInWithRedirect, // <--- MUDANÇA 1: Usar Redirect em vez de Popup
+  signInWithRedirect, 
   GoogleAuthProvider, 
   signOut, 
   onAuthStateChanged, 
@@ -29,9 +28,10 @@ import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { 
   Trash2, Heart, MessageCircle, LogOut, Plus, 
   Trophy, MessageSquare, 
-  LayoutList, X, Clock, MapPin, Flame, Check, Send, Camera, AtSign, Bell, BellRing, AlignLeft, Calendar, ArrowLeft
+  LayoutList, X, Clock, MapPin, Flame, Send, Camera, AtSign, Bell, BellRing, AlignLeft, Calendar, ArrowLeft
 } from "lucide-react";
 
+// Import do seu gráfico
 import WeeklyChart from "./graficos/weeklychart";
 
 // --- Interfaces ---
@@ -71,6 +71,9 @@ interface RankingItem {
 
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
+  // NOVO: Estado para segurar a tela enquanto o Firebase pensa
+  const [isAuthChecking, setIsAuthChecking] = useState(true); 
+  
   const [posts, setPosts] = useState<Post[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [image, setImage] = useState<File | null>(null);
@@ -106,9 +109,14 @@ export default function Home() {
     }
   }, [image]);
 
-  // --- Auth & Notificações ---
+  // --- Auth & Notificações (CORRIGIDO PARA IPHONE) ---
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => setUser(u));
+    // O onAuthStateChanged é o "porteiro". Ele avisa quando o login confirmou.
+    const unsub = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setIsAuthChecking(false); // <--- AQUI ESTÁ O SEGREDO: Só libera a tela depois de checar
+    });
+
     if (typeof window !== "undefined" && "Notification" in window) {
       if (Notification.permission === "granted") setNotificationsEnabled(true);
     }
@@ -140,10 +148,8 @@ export default function Home() {
     }
   }, [screen]);
 
-  // --- MUDANÇA 2: Função de Login Compatível com iPhone ---
   const handleLogin = () => {
     const provider = new GoogleAuthProvider();
-    // Usa redirecionamento (recarrega a página) em vez de Popup (que o iPhone bloqueia)
     signInWithRedirect(auth, provider);
   };
 
@@ -221,6 +227,18 @@ export default function Home() {
   const myRankIndex = ranking.findIndex((r) => r.name === user?.displayName);
   const myRank = myRankIndex !== -1 ? myRankIndex + 1 : "-";
 
+
+  // --- TELA DE CARREGAMENTO (SPLASH SCREEN) ---
+  // Isso impede que o iPhone mostre o login antes de confirmar quem é você
+  if (isAuthChecking) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-black text-white">
+        <Flame size={48} className="text-green-500 fill-green-500 animate-pulse" />
+        <p className="mt-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Carregando...</p>
+      </div>
+    );
+  }
+
   // --- TELA DE LOGIN ---
   if (!user) return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-black text-white p-8">
@@ -230,7 +248,6 @@ export default function Home() {
       </div>
       <h1 className="text-2xl font-bold mb-2 text-center">Bem-vindo ao Desafio</h1>
       <p className="text-zinc-400 text-center mb-12 text-sm px-4">Junte-se aos seus amigos e alcance a sua melhor versão em 2026.</p>
-      {/* MUDANÇA 3: Botão chama a nova função handleLogin */}
       <button onClick={handleLogin} className="bg-white text-black w-full py-4 rounded-full font-bold text-sm shadow-lg hover:bg-zinc-200 transition">Entrar com Google</button>
     </div>
   );
@@ -268,7 +285,10 @@ export default function Home() {
               <div className="flex flex-col items-center justify-center"><span className="text-2xl font-bold text-white">327</span><span className="text-[9px] text-zinc-500 uppercase mt-1">Dias Rest.</span></div>
             </div>
 
-            <WeeklyChart posts={posts} userId={user.uid} />
+            {/* --- GRÁFICO (Com altura controlada para ficar menor) --- */}
+            <div className="h-40 w-full mb-4">
+               <WeeklyChart posts={posts} userId={user.uid} />
+            </div>
 
             <div className="space-y-4">
               <h3 className="text-xs font-bold text-zinc-500 uppercase mb-1 ml-1">Feed da Comunidade</h3>
