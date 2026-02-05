@@ -2,9 +2,10 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { auth, db, storage } from "../firebase"; // Certifique-se que o caminho está certo
+import { auth, db, storage } from "../firebase"; 
 import { 
   signInWithRedirect, 
+  getRedirectResult, // <--- IMPORTANTE: Para pegar o erro do login
   GoogleAuthProvider, 
   signOut, 
   onAuthStateChanged, 
@@ -28,10 +29,9 @@ import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { 
   Trash2, Heart, MessageCircle, LogOut, Plus, 
   Trophy, MessageSquare, 
-  LayoutList, X, Clock, MapPin, Flame, Send, Camera, AtSign, Bell, BellRing, AlignLeft, Calendar, ArrowLeft
+  LayoutList, X, Clock, MapPin, Flame, Send, Camera, AtSign, Bell, BellRing, AlignLeft, Calendar, ArrowLeft, AlertTriangle
 } from "lucide-react";
 
-// Import do seu gráfico
 import WeeklyChart from "./graficos/weeklychart";
 
 // --- Interfaces ---
@@ -71,8 +71,8 @@ interface RankingItem {
 
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
-  // NOVO: Estado para segurar a tela enquanto o Firebase pensa
   const [isAuthChecking, setIsAuthChecking] = useState(true); 
+  const [loginError, setLoginError] = useState(""); // <--- Estado para guardar o erro
   
   const [posts, setPosts] = useState<Post[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -109,12 +109,30 @@ export default function Home() {
     }
   }, [image]);
 
-  // --- Auth & Notificações (CORRIGIDO PARA IPHONE) ---
+  // --- Auth & Notificações & Debug de Erro ---
   useEffect(() => {
-    // O onAuthStateChanged é o "porteiro". Ele avisa quando o login confirmou.
+    // 1. Tenta pegar o resultado do redirecionamento (Isso pega erros do Google)
+    getRedirectResult(auth)
+      .then((result) => {
+        if (result) {
+          console.log("Login com sucesso via Redirect:", result.user);
+        }
+      })
+      .catch((error) => {
+        console.error("Erro no Redirect:", error);
+        setLoginError(error.message); // Mostra o erro na tela
+        setIsAuthChecking(false); // Para de carregar se der erro
+      });
+
+    // 2. Oporteiro padrão do Firebase
     const unsub = onAuthStateChanged(auth, (u) => {
       setUser(u);
-      setIsAuthChecking(false); // <--- AQUI ESTÁ O SEGREDO: Só libera a tela depois de checar
+      // Só para de carregar se já tiver usuário ou se NÃO estivermos processando um redirect
+      // (Demos um pequeno delay para garantir)
+      setTimeout(() => {
+         if (!u && !loginError) setIsAuthChecking(false);
+         if (u) setIsAuthChecking(false);
+      }, 1000);
     });
 
     if (typeof window !== "undefined" && "Notification" in window) {
@@ -124,7 +142,7 @@ export default function Home() {
       navigator.serviceWorker.register('/sw.js').catch((err) => console.log('Erro SW:', err));
     }
     return () => unsub();
-  }, []);
+  }, [loginError]);
 
   // --- Monitorar Posts ---
   useEffect(() => {
@@ -149,6 +167,8 @@ export default function Home() {
   }, [screen]);
 
   const handleLogin = () => {
+    setLoginError(""); // Limpa erros antigos
+    setIsAuthChecking(true); // Mostra carregando
     const provider = new GoogleAuthProvider();
     signInWithRedirect(auth, provider);
   };
@@ -228,8 +248,7 @@ export default function Home() {
   const myRank = myRankIndex !== -1 ? myRankIndex + 1 : "-";
 
 
-  // --- TELA DE CARREGAMENTO (SPLASH SCREEN) ---
-  // Isso impede que o iPhone mostre o login antes de confirmar quem é você
+  // --- TELA DE CARREGAMENTO ---
   if (isAuthChecking) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-black text-white">
@@ -247,7 +266,16 @@ export default function Home() {
         <span className="text-3xl font-bold text-white tracking-tighter">EvoFit</span>
       </div>
       <h1 className="text-2xl font-bold mb-2 text-center">Bem-vindo ao Desafio</h1>
-      <p className="text-zinc-400 text-center mb-12 text-sm px-4">Junte-se aos seus amigos e alcance a sua melhor versão em 2026.</p>
+      <p className="text-zinc-400 text-center mb-8 text-sm px-4">Junte-se aos seus amigos e alcance a sua melhor versão em 2026.</p>
+      
+      {/* --- CAIXA DE ERRO (NOVO) --- */}
+      {loginError && (
+        <div className="bg-red-500/10 border border-red-500/50 p-4 rounded-xl mb-6 flex items-start gap-3 w-full">
+           <AlertTriangle className="text-red-500 shrink-0" size={20} />
+           <p className="text-red-200 text-xs text-left break-all">{loginError}</p>
+        </div>
+      )}
+
       <button onClick={handleLogin} className="bg-white text-black w-full py-4 rounded-full font-bold text-sm shadow-lg hover:bg-zinc-200 transition">Entrar com Google</button>
     </div>
   );
@@ -285,7 +313,7 @@ export default function Home() {
               <div className="flex flex-col items-center justify-center"><span className="text-2xl font-bold text-white">327</span><span className="text-[9px] text-zinc-500 uppercase mt-1">Dias Rest.</span></div>
             </div>
 
-            {/* --- GRÁFICO (Com altura controlada para ficar menor) --- */}
+            {/* --- GRÁFICO --- */}
             <div className="h-40 w-full mb-4">
                <WeeklyChart posts={posts} userId={user.uid} />
             </div>
