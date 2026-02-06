@@ -23,13 +23,15 @@ import {
   updateDoc, 
   arrayUnion, 
   arrayRemove,
-  Timestamp
+  Timestamp,
+  where,
+  getDocs
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { 
   Trash2, Heart, MessageCircle, LogOut, Plus, 
   Trophy, MessageSquare, 
-  LayoutList, X, Clock, MapPin, Flame, Send, Camera, AtSign, Bell, BellRing, AlignLeft, Calendar, ArrowLeft, AlertTriangle, Pencil, User as UserIcon, Save, Dumbbell, Hash, Layers, Weight
+  LayoutList, X, Clock, MapPin, Flame, Send, Camera, AtSign, Bell, BellRing, AlignLeft, Calendar, ArrowLeft, AlertTriangle, Pencil, User as UserIcon, Save, Dumbbell, Download, ChevronDown
 } from "lucide-react";
 
 import WeeklyChart from "./graficos/weeklychart";
@@ -48,6 +50,12 @@ interface ExerciseItem {
   rest: string;
 }
 
+interface Template {
+  id: string;
+  name: string;
+  exercises: ExerciseItem[];
+}
+
 interface Post {
   id: string;
   imageUrl: string;
@@ -59,7 +67,7 @@ interface Post {
   duration?: string;
   calories?: string;
   distance?: string;
-  exercises?: ExerciseItem[]; // Nova lista de exercícios
+  exercises?: ExerciseItem[]; 
   createdAt: any;
 }
 
@@ -79,6 +87,25 @@ interface RankingItem {
   count: number;
 }
 
+// Helper para verificar se a data é desta semana (começando segunda)
+function isThisWeek(date: Date) {
+  const now = new Date();
+  const dayOfWeek = now.getDay(); // 0 (Dom) - 6 (Sab)
+  const numDay = now.getDate();
+  
+  const start = new Date(now);
+  // Ajustar para segunda-feira ser o inicio (Se hoje é domingo 0, volta 6 dias. Se é segunda 1, volta 0)
+  const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+  start.setDate(numDay - daysToMonday);
+  start.setHours(0, 0, 0, 0);
+
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  end.setHours(23, 59, 59, 999);
+
+  return date >= start && date <= end;
+}
+
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthChecking, setIsAuthChecking] = useState(true); 
@@ -86,6 +113,7 @@ export default function Home() {
   
   const [posts, setPosts] = useState<Post[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [templates, setTemplates] = useState<Template[]>([]); // Estado dos Templates
   const [image, setImage] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -103,13 +131,21 @@ export default function Home() {
   const [selectedDate, setSelectedDate] = useState("");
   const [selectedTime, setSelectedTime] = useState("");
 
-  // --- NOVOS INPUTS DE EXERCÍCIO ---
+  // Inputs de Exercício
   const [currentExercises, setCurrentExercises] = useState<ExerciseItem[]>([]);
   const [exName, setExName] = useState("");
   const [exSets, setExSets] = useState("");
   const [exReps, setExReps] = useState("");
   const [exWeight, setExWeight] = useState("");
   const [exRest, setExRest] = useState("");
+
+  // Estados de Template UI
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [templateNameInput, setTemplateNameInput] = useState("");
+  const [isSavingTemplate, setIsSavingTemplate] = useState(false);
+
+  // Estados de Ranking UI
+  const [rankingTab, setRankingTab] = useState<"general" | "weekly">("weekly");
 
   const [commentText, setCommentText] = useState<Record<string, string>>({});
   const [chatInput, setChatInput] = useState("");
@@ -134,12 +170,15 @@ export default function Home() {
     }
   }, [image, editingPost]);
 
-  // --- Auth ---
+  // --- Auth & Data ---
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
       setUser(u);
       setIsAuthChecking(false); 
-      if(u) setNewProfileName(u.displayName || "");
+      if(u) {
+        setNewProfileName(u.displayName || "");
+        fetchTemplates(u.uid); // Carrega templates ao logar
+      }
     });
     if (typeof window !== "undefined" && "Notification" in window) {
       if (Notification.permission === "granted") setNotificationsEnabled(true);
@@ -167,6 +206,95 @@ export default function Home() {
     }
   }, [screen]);
 
+  // --- Funções de Template ---
+  const fetchTemplates = async (uid: string) => {
+    try {
+      const q = query(collection(db, "templates"), where("userId", "==", uid));
+      const querySnapshot = await getDocs(q);
+      const temps = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() } as Template));
+      setTemplates(temps);
+    } catch (e) { console.error("Erro templates:", e); }
+  };
+
+  const saveTemplate = async () => {
+    if (!user || currentExercises.length === 0 || !templateNameInput.trim()) return;
+    try {
+      const docRef = await addDoc(collection(db, "templates"), {
+        userId: user.uid,
+        name: templateNameInput,
+        exercises: currentExercises
+      });
+      setTemplates([...templates, { id: docRef.id, name: templateNameInput, exercises: currentExercises }]);
+      setIsSavingTemplate(false);
+      setTemplateNameInput("");
+      alert("Rotina salva!");
+    } catch (e) { console.error(e); }
+  };
+
+  const loadTemplate = (temp: Template) => {
+    setCurrentExercises(temp.exercises);
+    setShowTemplates(false);
+  };
+
+  const deleteTemplate = async (id: string) => {
+    if(!confirm("Excluir rotina?")) return;
+    try {
+      await deleteDoc(doc(db, "templates", id));
+      setTemplates(templates.filter(t => t.id !== id));
+    } catch(e) { console.error(e); }
+  };
+
+  // --- Calculo de Ofensiva (Streak) ---
+  const calculateStreak = () => {
+    if (!user || posts.length === 0) return 0;
+    const myPosts = posts.filter(p => p.userId === user.uid).sort((a,b) => b.createdAt - a.createdAt); // Mais recente primeiro
+    if (myPosts.length === 0) return 0;
+
+    let streak = 0;
+    const today = new Date();
+    today.setHours(0,0,0,0);
+    
+    // Datas unicas de treino (para não contar 2 treinos no mesmo dia como 2 dias)
+    const activeDays = new Set<string>();
+    myPosts.forEach(p => {
+        if(p.createdAt?.toDate) {
+            activeDays.add(p.createdAt.toDate().toDateString());
+        }
+    });
+
+    // Verificar dias consecutivos para trás
+    // Checa hoje
+    if (activeDays.has(today.toDateString())) {
+        streak++;
+    } else {
+        // Se não treinou hoje, mas treinou ontem, a sequencia ainda está viva (mas hoje conta 0 por enquanto, ou conta ontem?)
+        // Logica Duolingo: Se não fez hoje, o streak "pausa" mas mostra o valor antigo até o fim do dia.
+        // Vamos verificar "Ontem".
+        const yesterday = new Date(today);
+        yesterday.setDate(yesterday.getDate() - 1);
+        if(!activeDays.has(yesterday.toDateString()) && streak === 0) return 0; // Quebrou
+    }
+
+    // Loop para trás
+    let checkDate = new Date(today);
+    // Se hoje já contou, volta 1. Se não, começa de ontem.
+    if(streak > 0) checkDate.setDate(checkDate.getDate() - 1);
+    else checkDate.setDate(checkDate.getDate() - 1); // Começa checando ontem
+
+    while (true) {
+        if (activeDays.has(checkDate.toDateString())) {
+            streak++;
+            checkDate.setDate(checkDate.getDate() - 1);
+        } else {
+            break;
+        }
+    }
+    return streak;
+  };
+  
+  const myStreak = calculateStreak();
+
+  // --- Demais Funções ---
   const handleLogin = async () => {
     setLoginError(""); 
     setIsLoggingIn(true);
@@ -174,7 +302,7 @@ export default function Home() {
     try {
       await signInWithPopup(auth, provider);
     } catch (error: any) {
-      setLoginError("Erro no login. Tente novamente.");
+      setLoginError("Erro no login.");
       setIsLoggingIn(false);
     }
   };
@@ -194,22 +322,14 @@ export default function Home() {
         setIsEditingProfile(false);
         setNewProfileImage(null);
         alert("Perfil atualizado!");
-    } catch (e) { console.error(e); alert("Erro ao atualizar perfil."); }
+    } catch (e) { console.error(e); }
     setLoading(false);
   };
 
-  // --- Adicionar Exercício à Lista Local ---
   const addExercise = () => {
     if (!exName) return;
-    const newEx: ExerciseItem = {
-      name: exName,
-      sets: exSets || "-",
-      reps: exReps || "-",
-      weight: exWeight || "-",
-      rest: exRest || "-"
-    };
+    const newEx: ExerciseItem = { name: exName, sets: exSets || "-", reps: exReps || "-", weight: exWeight || "-", rest: exRest || "-" };
     setCurrentExercises([...currentExercises, newEx]);
-    // Limpar campos
     setExName(""); setExSets(""); setExReps(""); setExWeight(""); setExRest("");
   };
 
@@ -228,34 +348,30 @@ export default function Home() {
         finalDate = new Date(`${selectedDate}T${selectedTime}`);
       }
 
+      const postData = {
+          duration: duration || "",
+          calories: calories || "",
+          distance: distance || "",
+          exercises: currentExercises,
+          createdAt: Timestamp.fromDate(finalDate),
+          userName: user.displayName || "Atleta", // Atualiza nome se mudou
+          userPhoto: user.photoURL || "" 
+      };
+
       if (editingPost) {
-        const postRef = doc(db, "posts", editingPost.id);
-        await updateDoc(postRef, {
-           duration: duration || "",
-           calories: calories || "",
-           distance: distance || "",
-           exercises: currentExercises, // Salva lista de exercicios
-           createdAt: Timestamp.fromDate(finalDate),
-        });
+        await updateDoc(doc(db, "posts", editingPost.id), postData);
         setEditingPost(null); 
       } else if (image) {
         const storageRef = ref(storage, `posts/${Date.now()}-${image.name}`);
         await uploadBytes(storageRef, image);
         const url = await getDownloadURL(storageRef);
-        const startComments = initialComment.trim() ? [{ userName: user.displayName || "Atleta", text: initialComment.trim() }] : [];
-
+        
         await addDoc(collection(db, "posts"), {
+          ...postData,
           imageUrl: url, 
           userId: user.uid, 
-          userName: user.displayName || "Atleta",
-          userPhoto: user.photoURL || "", 
           likes: [], 
-          comments: startComments,
-          duration: duration || "",
-          calories: calories || "",
-          distance: distance || "",
-          exercises: currentExercises, // Salva lista de exercicios
-          createdAt: Timestamp.fromDate(finalDate), 
+          comments: initialComment.trim() ? [{ userName: user.displayName || "Atleta", text: initialComment.trim() }] : [],
         });
         if (notificationsEnabled) new Notification("EvoFit", { body: "Treino registrado! 🔥" });
       }
@@ -269,7 +385,7 @@ export default function Home() {
     setDuration(post.duration || "");
     setCalories(post.calories || "");
     setDistance(post.distance || "");
-    setCurrentExercises(post.exercises || []); // Carrega exercicios existentes
+    setCurrentExercises(post.exercises || []); 
     if (post.createdAt?.toDate) {
       const dateObj = post.createdAt.toDate();
       const yyyy = dateObj.getFullYear();
@@ -291,9 +407,10 @@ export default function Home() {
       setInitialComment("");
       setCurrentExercises([]);
       setExName(""); setExSets(""); setExReps(""); setExWeight("");
+      setIsSavingTemplate(false);
   }
 
-  // --- Funções Chat e Ranking mantidas ---
+  // --- Chat ---
   const handleSendMessage = async () => {
     if (!chatInput.trim() || !user) return;
     try {
@@ -310,7 +427,7 @@ export default function Home() {
   };
 
   const handleDeleteMessage = async (msgId: string) => {
-    if (confirm("Apagar mensagem para todos?")) {
+    if (confirm("Apagar mensagem?")) {
       await deleteDoc(doc(db, "messages", msgId));
     }
     setActiveReactionMsg(null);
@@ -338,7 +455,16 @@ export default function Home() {
     if (permission === "granted") setNotificationsEnabled(true);
   };
 
-  const ranking = Object.values(posts.reduce<Record<string, RankingItem>>((acc, post) => {
+  // --- Lógica de Ranking (Geral vs Semanal) ---
+  const filteredPostsForRanking = posts.filter(post => {
+    if (rankingTab === 'general') return true;
+    if (rankingTab === 'weekly' && post.createdAt?.toDate) {
+      return isThisWeek(post.createdAt.toDate());
+    }
+    return false;
+  });
+
+  const ranking = Object.values(filteredPostsForRanking.reduce<Record<string, RankingItem>>((acc, post) => {
       acc[post.userId] = { name: post.userName, photo: post.userPhoto, count: (acc[post.userId]?.count || 0) + 1 };
       return acc;
     }, {})).sort((a, b) => b.count - a.count);
@@ -365,6 +491,11 @@ export default function Home() {
              <div className="absolute top-0 left-0 w-full p-4 z-20 flex justify-between items-center">
                 <div className="flex items-center gap-1"><Flame size={20} className="text-green-500 fill-green-500"/><h2 className="text-lg font-bold tracking-tight">EvoFit</h2></div>
                 <div className="flex gap-4 items-center">
+                  {/* STREAK NO FEED */}
+                  <div className="flex items-center gap-1 bg-black/40 backdrop-blur-sm px-2 py-1 rounded-full border border-white/10">
+                    <Flame size={14} className={myStreak > 0 ? "text-orange-500 fill-orange-500 animate-pulse" : "text-zinc-500"} />
+                    <span className="text-xs font-bold text-white">{myStreak}</span>
+                  </div>
                   <button onClick={requestNotification} className={notificationsEnabled ? "text-green-500" : "text-white/80"}>{notificationsEnabled ? <BellRing size={20} /> : <Bell size={20} />}</button>
                 </div>
              </div>
@@ -400,7 +531,6 @@ export default function Home() {
                   </div>
                   <img src={post.imageUrl} className="w-full aspect-square object-cover bg-zinc-950" alt="Treino" />
                   
-                  {/* --- LISTA DE EXERCÍCIOS NO FEED --- */}
                   {post.exercises && post.exercises.length > 0 && (
                     <div className="bg-zinc-950/50 p-3 border-y border-zinc-800/50">
                         <h4 className="text-[10px] font-bold text-zinc-500 uppercase mb-2 flex items-center gap-1"><Dumbbell size={10} /> Série Realizada</h4>
@@ -438,8 +568,15 @@ export default function Home() {
 
       {screen === "ranking" && (
         <div className="flex-1 p-6 pb-24 bg-black">
-           <h2 className="text-xl font-bold mb-6 text-center uppercase tracking-widest text-green-500">Ranking Geral</h2>
+           <h2 className="text-xl font-bold mb-4 text-center uppercase tracking-widest text-green-500">Ranking</h2>
+           {/* ABAS DE RANKING */}
+           <div className="flex justify-center gap-2 mb-6">
+              <button onClick={() => setRankingTab("weekly")} className={`px-4 py-2 rounded-full text-xs font-bold transition ${rankingTab === 'weekly' ? 'bg-green-500 text-black' : 'bg-zinc-800 text-zinc-400'}`}>Semanal</button>
+              <button onClick={() => setRankingTab("general")} className={`px-4 py-2 rounded-full text-xs font-bold transition ${rankingTab === 'general' ? 'bg-green-500 text-black' : 'bg-zinc-800 text-zinc-400'}`}>Geral</button>
+           </div>
+           
            <div className="space-y-3">{ranking.map((r, i) => (<div key={i} className={`flex items-center justify-between p-4 rounded-xl border ${i===0 ? 'bg-zinc-900 border-green-500' : 'bg-black border-zinc-800'}`}><div className="flex items-center gap-4"><span className={`font-black text-lg w-6 text-center ${i===0 ? 'text-green-500' : 'text-zinc-600'}`}>{i+1}</span><img src={r.photo} className="w-12 h-12 rounded-full border border-zinc-800" alt="Rank" /><span className="font-bold">{r.name}</span></div><div className="text-right"><span className="block font-bold text-lg text-white">{r.count}</span><span className="text-[10px] text-zinc-500 uppercase">Treinos</span></div></div>))}</div>
+           {ranking.length === 0 && <p className="text-zinc-500 text-center text-xs mt-10">Nenhum treino registrado neste período.</p>}
         </div>
       )}
 
@@ -476,7 +613,7 @@ export default function Home() {
                     {isEditingProfile && (<label className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-full cursor-pointer hover:bg-black/70 transition"><Camera size={32} className="text-white opacity-80" /><input type="file" className="hidden" accept="image/*" onChange={(e) => setNewProfileImage(e.target.files?.[0] || null)} /></label>)}
                 </div>
                 {isEditingProfile ? (<div className="mt-4 w-full flex gap-2"><input value={newProfileName} onChange={(e) => setNewProfileName(e.target.value)} className="bg-zinc-900 border border-zinc-800 p-2 rounded-lg text-white text-center w-full focus:border-green-500 outline-none" placeholder="Seu Nome" /><button onClick={handleSaveProfile} disabled={loading} className="bg-green-500 p-2 rounded-lg text-black hover:bg-green-400"><Save size={20}/></button></div>) : (<div className="mt-4 flex items-center gap-2"><h2 className="text-2xl font-bold text-white">{user.displayName}</h2><button onClick={() => { setIsEditingProfile(true); setNewProfileName(user.displayName || ""); }} className="text-zinc-500 hover:text-white"><Pencil size={16} /></button></div>)}
-                <p className="text-zinc-500 text-xs mt-1">Membro desde 2026</p>
+                <div className="flex items-center gap-2 mt-2 bg-zinc-900 px-3 py-1 rounded-full border border-zinc-800"><Flame size={14} className="text-orange-500 fill-orange-500" /><span className="text-xs font-bold text-white">Ofensiva: {myStreak} dias</span></div>
                 <button onClick={() => signOut(auth)} className="mt-4 text-red-500 text-xs flex items-center gap-1 hover:underline"><LogOut size={12}/> Sair da conta</button>
             </div>
             <div className="grid grid-cols-3 gap-3 mb-8">
@@ -503,12 +640,41 @@ export default function Home() {
             <div className="flex justify-between items-center mb-6"><h3 className="text-green-500 font-black text-xl tracking-wider uppercase italic">{editingPost ? "Editar Treino" : "Confirmar Treino"}</h3><button onClick={clearModal} className="bg-zinc-800 p-2 rounded-full text-zinc-400 hover:text-white hover:bg-zinc-700 transition"><X size={20} /></button></div>
             <div className="relative mb-6 rounded-2xl overflow-hidden border-2 border-zinc-800 shadow-lg aspect-square max-h-56 mx-auto group"><img src={image ? URL.createObjectURL(image) : editingPost?.imageUrl} className="w-full h-full object-cover" alt="Preview" /><div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent"></div></div>
             
-            {/* DATA E HORA */}
             <div className="grid grid-cols-2 gap-3 mb-4"><div className="bg-black/50 p-3 rounded-xl border border-zinc-800 flex items-center gap-2 focus-within:border-white/50 transition"><Calendar size={18} className="text-zinc-500" /><div className="flex-1"><label className="text-zinc-500 text-[10px] uppercase font-bold block mb-0.5">Dia</label><input type="date" className="w-full bg-transparent text-white text-sm outline-none custom-date-input" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)}/></div></div><div className="bg-black/50 p-3 rounded-xl border border-zinc-800 flex items-center gap-2 focus-within:border-white/50 transition"><Clock size={18} className="text-zinc-500" /><div className="flex-1"><label className="text-zinc-500 text-[10px] uppercase font-bold block mb-0.5">Hora</label><input type="time" className="w-full bg-transparent text-white text-sm outline-none custom-time-input" value={selectedTime} onChange={(e) => setSelectedTime(e.target.value)}/></div></div></div>
             
-            {/* INPUTS DE EXERCÍCIOS (NOVO) */}
             <div className="mb-6 bg-zinc-950/50 p-4 rounded-xl border border-zinc-800">
-                <h4 className="text-zinc-400 font-bold text-xs uppercase mb-3 flex items-center gap-2"><Dumbbell size={14}/> Montar Treino</h4>
+                <div className="flex justify-between items-center mb-3">
+                    <h4 className="text-zinc-400 font-bold text-xs uppercase flex items-center gap-2"><Dumbbell size={14}/> Montar Treino</h4>
+                    {/* BOTÕES DE TEMPLATE */}
+                    <div className="flex gap-2">
+                        <button onClick={() => setShowTemplates(!showTemplates)} className="text-[10px] flex items-center gap-1 bg-zinc-800 px-2 py-1 rounded text-zinc-300 hover:bg-zinc-700"><Download size={10} /> Carregar</button>
+                        {currentExercises.length > 0 && <button onClick={() => setIsSavingTemplate(!isSavingTemplate)} className="text-[10px] flex items-center gap-1 bg-green-900/30 px-2 py-1 rounded text-green-400 hover:bg-green-900/50"><Save size={10} /> Salvar</button>}
+                    </div>
+                </div>
+
+                {/* AREA DE CARREGAR TEMPLATES */}
+                {showTemplates && (
+                    <div className="mb-4 bg-zinc-900 p-2 rounded-lg border border-zinc-700 max-h-32 overflow-y-auto">
+                        <p className="text-[10px] text-zinc-500 mb-2">Seus treinos salvos:</p>
+                        {templates.length === 0 ? <p className="text-[10px] text-zinc-600">Nenhum treino salvo.</p> : 
+                            templates.map(t => (
+                                <div key={t.id} className="flex justify-between items-center bg-black/40 p-1.5 rounded mb-1 cursor-pointer hover:bg-black/60" onClick={() => loadTemplate(t)}>
+                                    <span className="text-xs text-white">{t.name}</span>
+                                    <button onClick={(e) => { e.stopPropagation(); deleteTemplate(t.id); }} className="text-red-500 hover:text-red-400"><Trash2 size={10}/></button>
+                                </div>
+                            ))
+                        }
+                    </div>
+                )}
+
+                 {/* AREA DE SALVAR TEMPLATE */}
+                 {isSavingTemplate && (
+                    <div className="mb-4 flex gap-2">
+                        <input value={templateNameInput} onChange={(e) => setTemplateNameInput(e.target.value)} className="flex-1 bg-zinc-900 border border-zinc-700 text-xs text-white p-1.5 rounded focus:border-green-500 outline-none" placeholder="Nome da rotina (ex: Treino A)" />
+                        <button onClick={saveTemplate} className="bg-green-600 text-white text-xs px-2 rounded hover:bg-green-500">Salvar</button>
+                    </div>
+                )}
+
                 <div className="grid grid-cols-4 gap-2 mb-2">
                      <input placeholder="Exercício" className="col-span-4 bg-zinc-900 rounded-lg p-2 text-xs text-white border border-zinc-800" value={exName} onChange={(e) => setExName(e.target.value)} />
                      <input placeholder="Séries" type="number" className="bg-zinc-900 rounded-lg p-2 text-xs text-white border border-zinc-800" value={exSets} onChange={(e) => setExSets(e.target.value)} />
