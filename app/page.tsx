@@ -9,7 +9,7 @@ import {
   signOut, 
   onAuthStateChanged, 
   User,
-  updateProfile // <--- Importante para mudar foto/nome
+  updateProfile 
 } from "firebase/auth";
 import { 
   collection, 
@@ -29,7 +29,7 @@ import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { 
   Trash2, Heart, MessageCircle, LogOut, Plus, 
   Trophy, MessageSquare, 
-  LayoutList, X, Clock, MapPin, Flame, Send, Camera, AtSign, Bell, BellRing, AlignLeft, Calendar, ArrowLeft, AlertTriangle, Pencil, User as UserIcon, Save, Settings
+  LayoutList, X, Clock, MapPin, Flame, Send, Camera, AtSign, Bell, BellRing, AlignLeft, Calendar, ArrowLeft, AlertTriangle, Pencil, User as UserIcon, Save, Dumbbell, Hash, Layers, Weight
 } from "lucide-react";
 
 import WeeklyChart from "./graficos/weeklychart";
@@ -38,6 +38,14 @@ import WeeklyChart from "./graficos/weeklychart";
 interface Comment {
   userName: string;
   text: string;
+}
+
+interface ExerciseItem {
+  name: string;
+  sets: string;
+  reps: string;
+  weight: string;
+  rest: string;
 }
 
 interface Post {
@@ -51,6 +59,7 @@ interface Post {
   duration?: string;
   calories?: string;
   distance?: string;
+  exercises?: ExerciseItem[]; // Nova lista de exercícios
   createdAt: any;
 }
 
@@ -81,10 +90,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   
-  // --- Estados de Edição de Post ---
   const [editingPost, setEditingPost] = useState<Post | null>(null);
-
-  // --- Estados de Edição de PERFIL (Novo) ---
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [newProfileName, setNewProfileName] = useState("");
   const [newProfileImage, setNewProfileImage] = useState<File | null>(null);
@@ -97,6 +103,14 @@ export default function Home() {
   const [selectedDate, setSelectedDate] = useState("");
   const [selectedTime, setSelectedTime] = useState("");
 
+  // --- NOVOS INPUTS DE EXERCÍCIO ---
+  const [currentExercises, setCurrentExercises] = useState<ExerciseItem[]>([]);
+  const [exName, setExName] = useState("");
+  const [exSets, setExSets] = useState("");
+  const [exReps, setExReps] = useState("");
+  const [exWeight, setExWeight] = useState("");
+  const [exRest, setExRest] = useState("");
+
   const [commentText, setCommentText] = useState<Record<string, string>>({});
   const [chatInput, setChatInput] = useState("");
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
@@ -104,7 +118,6 @@ export default function Home() {
   const [activeReactionMsg, setActiveReactionMsg] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  // Adicionei 'profile' nas telas possíveis
   const [screen, setScreen] = useState<"feed" | "ranking" | "chat" | "profile">("feed");
 
   // --- Inicializar Data/Hora ---
@@ -134,7 +147,6 @@ export default function Home() {
     return () => unsub();
   }, []);
 
-  // --- Monitorar Posts ---
   useEffect(() => {
     const q = query(collection(db, "posts"), orderBy("createdAt", "desc"));
     return onSnapshot(q, (snapshot) => {
@@ -143,7 +155,6 @@ export default function Home() {
     });
   }, []);
 
-  // --- Monitorar Chat ---
   useEffect(() => {
     if (screen === 'chat') {
       const q = query(collection(db, "messages"), orderBy("createdAt", "asc"));
@@ -168,40 +179,46 @@ export default function Home() {
     }
   };
 
-  // --- Salvar Perfil (Novo) ---
   const handleSaveProfile = async () => {
     if (!user) return;
     setLoading(true);
     try {
         let photoURL = user.photoURL;
-
-        // 1. Se tiver imagem nova, faz upload
         if (newProfileImage) {
             const storageRef = ref(storage, `profiles/${user.uid}-${Date.now()}`);
             await uploadBytes(storageRef, newProfileImage);
             photoURL = await getDownloadURL(storageRef);
         }
-
-        // 2. Atualiza o perfil no Firebase Auth
-        await updateProfile(user, {
-            displayName: newProfileName,
-            photoURL: photoURL
-        });
-
-        // Força atualização local do estado do usuário
+        await updateProfile(user, { displayName: newProfileName, photoURL: photoURL });
         setUser({ ...user, displayName: newProfileName, photoURL: photoURL });
         setIsEditingProfile(false);
         setNewProfileImage(null);
-        alert("Perfil atualizado! (Novos posts usarão sua nova foto)");
-
-    } catch (e) {
-        console.error(e);
-        alert("Erro ao atualizar perfil.");
-    }
+        alert("Perfil atualizado!");
+    } catch (e) { console.error(e); alert("Erro ao atualizar perfil."); }
     setLoading(false);
   };
 
-  // --- Upload / Edição Post ---
+  // --- Adicionar Exercício à Lista Local ---
+  const addExercise = () => {
+    if (!exName) return;
+    const newEx: ExerciseItem = {
+      name: exName,
+      sets: exSets || "-",
+      reps: exReps || "-",
+      weight: exWeight || "-",
+      rest: exRest || "-"
+    };
+    setCurrentExercises([...currentExercises, newEx]);
+    // Limpar campos
+    setExName(""); setExSets(""); setExReps(""); setExWeight(""); setExRest("");
+  };
+
+  const removeExercise = (index: number) => {
+    const newList = [...currentExercises];
+    newList.splice(index, 1);
+    setCurrentExercises(newList);
+  };
+
   const handleSavePost = async () => {
     if (!user) return;
     setLoading(true);
@@ -217,6 +234,7 @@ export default function Home() {
            duration: duration || "",
            calories: calories || "",
            distance: distance || "",
+           exercises: currentExercises, // Salva lista de exercicios
            createdAt: Timestamp.fromDate(finalDate),
         });
         setEditingPost(null); 
@@ -236,6 +254,7 @@ export default function Home() {
           duration: duration || "",
           calories: calories || "",
           distance: distance || "",
+          exercises: currentExercises, // Salva lista de exercicios
           createdAt: Timestamp.fromDate(finalDate), 
         });
         if (notificationsEnabled) new Notification("EvoFit", { body: "Treino registrado! 🔥" });
@@ -250,6 +269,7 @@ export default function Home() {
     setDuration(post.duration || "");
     setCalories(post.calories || "");
     setDistance(post.distance || "");
+    setCurrentExercises(post.exercises || []); // Carrega exercicios existentes
     if (post.createdAt?.toDate) {
       const dateObj = post.createdAt.toDate();
       const yyyy = dateObj.getFullYear();
@@ -269,9 +289,11 @@ export default function Home() {
       setCalories("");
       setDistance("");
       setInitialComment("");
+      setCurrentExercises([]);
+      setExName(""); setExSets(""); setExReps(""); setExWeight("");
   }
 
-  // --- Chat ---
+  // --- Funções Chat e Ranking mantidas ---
   const handleSendMessage = async () => {
     if (!chatInput.trim() || !user) return;
     try {
@@ -299,7 +321,6 @@ export default function Home() {
     const msgRef = doc(db, "messages", msg.id);
     const currentReactions = msg.reactions || {};
     const userList = currentReactions[emoji] || [];
-
     let newReactions = { ...currentReactions };
     if (userList.includes(user.uid)) {
       newReactions[emoji] = userList.filter(id => id !== user.uid);
@@ -325,7 +346,6 @@ export default function Home() {
   const myRankIndex = ranking.findIndex((r) => r.name === user?.displayName);
   const myRank = myRankIndex !== -1 ? myRankIndex + 1 : "-";
 
-  // Cálculos do Perfil
   const myPosts = posts.filter(p => p.userId === user?.uid);
   const myTotalCalories = myPosts.reduce((acc, p) => acc + (Number(p.calories) || 0), 0);
   const myTotalWorkouts = myPosts.length;
@@ -337,7 +357,6 @@ export default function Home() {
   return (
     <div className="max-w-md mx-auto bg-black min-h-screen text-white font-sans flex flex-col relative overflow-hidden">
       
-      {/* --- FEED --- */}
       {screen === "feed" && (
         <>
           <div className="relative h-48 w-full">
@@ -374,13 +393,32 @@ export default function Home() {
                             <div className="flex items-center gap-1 text-zinc-400"><Calendar size={10} /><p className="text-[10px]">{post.createdAt?.toDate ? post.createdAt.toDate().toLocaleDateString('pt-BR', {day: '2-digit', month: '2-digit'}) : "Hoje"}</p></div>
                             {post.duration && (<div className="flex items-center gap-1 text-zinc-400 border-l border-zinc-700 pl-2 ml-1"><Clock size={10} /><p className="text-[10px]">{post.duration}</p></div>)}
                             {post.calories && (<div className="flex items-center gap-1 text-orange-400 border-l border-zinc-700 pl-2 ml-1"><Flame size={10} /><p className="text-[10px]">{post.calories}cal</p></div>)}
-                            {post.distance && (<div className="flex items-center gap-1 text-blue-400 border-l border-zinc-700 pl-2 ml-1"><MapPin size={10} /><p className="text-[10px]">{post.distance}</p></div>)}
                           </div>
                       </div>
                     </div>
                     {post.userId === user.uid && (<div className="flex items-center gap-2"><button onClick={() => openEditModal(post)} className="bg-zinc-800 p-1.5 rounded-full text-zinc-400 hover:text-white"><Pencil size={14} /></button><button onClick={() => deleteDoc(doc(db, "posts", post.id))} className="bg-zinc-800 p-1.5 rounded-full text-zinc-400 hover:text-red-500"><Trash2 size={14} /></button></div>)}
                   </div>
                   <img src={post.imageUrl} className="w-full aspect-square object-cover bg-zinc-950" alt="Treino" />
+                  
+                  {/* --- LISTA DE EXERCÍCIOS NO FEED --- */}
+                  {post.exercises && post.exercises.length > 0 && (
+                    <div className="bg-zinc-950/50 p-3 border-y border-zinc-800/50">
+                        <h4 className="text-[10px] font-bold text-zinc-500 uppercase mb-2 flex items-center gap-1"><Dumbbell size={10} /> Série Realizada</h4>
+                        <div className="space-y-1">
+                            {post.exercises.map((ex, idx) => (
+                                <div key={idx} className="flex justify-between items-center text-xs text-zinc-300 border-b border-zinc-800/50 last:border-0 pb-1 last:pb-0">
+                                    <span className="font-medium text-white">{ex.name}</span>
+                                    <div className="flex gap-2 text-[10px] text-zinc-500">
+                                        <span>{ex.sets}x{ex.reps}</span>
+                                        {ex.weight && ex.weight !== "-" && <span>{ex.weight}kg</span>}
+                                        {ex.rest && ex.rest !== "-" && <span>{ex.rest}s</span>}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                  )}
+
                   <div className="p-3">
                     <div className="flex gap-4 mb-2">
                       <button onClick={async () => {const ref = doc(db, "posts", post.id); post.likes.includes(user.uid) ? await updateDoc(ref, { likes: arrayRemove(user.uid) }) : await updateDoc(ref, { likes: arrayUnion(user.uid) }); }}><Heart size={24} className={post.likes.includes(user.uid) ? "fill-red-500 text-red-500" : "text-white"} /></button>
@@ -398,7 +436,6 @@ export default function Home() {
         </>
       )}
 
-      {/* --- RANKING --- */}
       {screen === "ranking" && (
         <div className="flex-1 p-6 pb-24 bg-black">
            <h2 className="text-xl font-bold mb-6 text-center uppercase tracking-widest text-green-500">Ranking Geral</h2>
@@ -406,7 +443,6 @@ export default function Home() {
         </div>
       )}
 
-      {/* --- CHAT --- */}
       {screen === "chat" && (
         <div className="flex-1 flex flex-col h-[100dvh] bg-black relative"> 
            <header className="p-4 border-b border-zinc-900 flex items-center gap-4 bg-black z-20"><button onClick={() => setScreen("feed")}><ArrowLeft size={24} className="text-zinc-400" /></button><div className="flex-1"><h2 className="font-bold text-sm text-white">Comunidade EvoFit</h2><p className="text-[10px] text-green-500 flex items-center gap-1">● Online</p></div></header>
@@ -431,69 +467,25 @@ export default function Home() {
         </div>
       )}
 
-      {/* --- PERFIL (NOVO) --- */}
       {screen === "profile" && (
         <div className="flex-1 flex flex-col bg-black p-6 pb-24 overflow-y-auto">
             <h2 className="text-xl font-bold mb-6 text-center uppercase tracking-widest text-green-500">Seu Perfil</h2>
-            
             <div className="flex flex-col items-center mb-8">
                 <div className="relative group">
                     <img src={newProfileImage ? URL.createObjectURL(newProfileImage) : (user.photoURL || "https://ui-avatars.com/api/?name=User")} className="w-28 h-28 rounded-full border-4 border-zinc-800 object-cover" alt="Perfil" />
-                    {isEditingProfile && (
-                        <label className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-full cursor-pointer hover:bg-black/70 transition">
-                            <Camera size={32} className="text-white opacity-80" />
-                            <input type="file" className="hidden" accept="image/*" onChange={(e) => setNewProfileImage(e.target.files?.[0] || null)} />
-                        </label>
-                    )}
+                    {isEditingProfile && (<label className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-full cursor-pointer hover:bg-black/70 transition"><Camera size={32} className="text-white opacity-80" /><input type="file" className="hidden" accept="image/*" onChange={(e) => setNewProfileImage(e.target.files?.[0] || null)} /></label>)}
                 </div>
-                
-                {isEditingProfile ? (
-                    <div className="mt-4 w-full flex gap-2">
-                        <input value={newProfileName} onChange={(e) => setNewProfileName(e.target.value)} className="bg-zinc-900 border border-zinc-800 p-2 rounded-lg text-white text-center w-full focus:border-green-500 outline-none" placeholder="Seu Nome" />
-                        <button onClick={handleSaveProfile} disabled={loading} className="bg-green-500 p-2 rounded-lg text-black hover:bg-green-400"><Save size={20}/></button>
-                    </div>
-                ) : (
-                    <div className="mt-4 flex items-center gap-2">
-                        <h2 className="text-2xl font-bold text-white">{user.displayName}</h2>
-                        <button onClick={() => { setIsEditingProfile(true); setNewProfileName(user.displayName || ""); }} className="text-zinc-500 hover:text-white"><Pencil size={16} /></button>
-                    </div>
-                )}
+                {isEditingProfile ? (<div className="mt-4 w-full flex gap-2"><input value={newProfileName} onChange={(e) => setNewProfileName(e.target.value)} className="bg-zinc-900 border border-zinc-800 p-2 rounded-lg text-white text-center w-full focus:border-green-500 outline-none" placeholder="Seu Nome" /><button onClick={handleSaveProfile} disabled={loading} className="bg-green-500 p-2 rounded-lg text-black hover:bg-green-400"><Save size={20}/></button></div>) : (<div className="mt-4 flex items-center gap-2"><h2 className="text-2xl font-bold text-white">{user.displayName}</h2><button onClick={() => { setIsEditingProfile(true); setNewProfileName(user.displayName || ""); }} className="text-zinc-500 hover:text-white"><Pencil size={16} /></button></div>)}
                 <p className="text-zinc-500 text-xs mt-1">Membro desde 2026</p>
                 <button onClick={() => signOut(auth)} className="mt-4 text-red-500 text-xs flex items-center gap-1 hover:underline"><LogOut size={12}/> Sair da conta</button>
             </div>
-
-            {/* Estatísticas */}
             <div className="grid grid-cols-3 gap-3 mb-8">
-                <div className="bg-zinc-900 p-3 rounded-xl border border-zinc-800 flex flex-col items-center">
-                    <span className="text-2xl font-bold text-white">{myTotalWorkouts}</span>
-                    <span className="text-[10px] text-zinc-500 uppercase">Treinos</span>
-                </div>
-                <div className="bg-zinc-900 p-3 rounded-xl border border-zinc-800 flex flex-col items-center">
-                    <span className="text-2xl font-bold text-orange-500">{myTotalCalories}</span>
-                    <span className="text-[10px] text-zinc-500 uppercase">Calorias</span>
-                </div>
-                 <div className="bg-zinc-900 p-3 rounded-xl border border-zinc-800 flex flex-col items-center">
-                    <span className="text-2xl font-bold text-green-500">327</span>
-                    <span className="text-[10px] text-zinc-500 uppercase">Dias Rest.</span>
-                </div>
+                <div className="bg-zinc-900 p-3 rounded-xl border border-zinc-800 flex flex-col items-center"><span className="text-2xl font-bold text-white">{myTotalWorkouts}</span><span className="text-[10px] text-zinc-500 uppercase">Treinos</span></div>
+                <div className="bg-zinc-900 p-3 rounded-xl border border-zinc-800 flex flex-col items-center"><span className="text-2xl font-bold text-orange-500">{myTotalCalories}</span><span className="text-[10px] text-zinc-500 uppercase">Calorias</span></div>
+                 <div className="bg-zinc-900 p-3 rounded-xl border border-zinc-800 flex flex-col items-center"><span className="text-2xl font-bold text-green-500">327</span><span className="text-[10px] text-zinc-500 uppercase">Dias Rest.</span></div>
             </div>
-
-            {/* Histórico Visual */}
             <h3 className="text-sm font-bold text-zinc-400 mb-3 ml-1">Galeria de Treinos</h3>
-            {myPosts.length === 0 ? (
-                <div className="text-center py-10 text-zinc-600 border border-dashed border-zinc-800 rounded-xl"><p>Nenhum treino registrado.</p></div>
-            ) : (
-                <div className="grid grid-cols-3 gap-2">
-                    {myPosts.map(post => (
-                        <div key={post.id} className="aspect-square rounded-lg overflow-hidden border border-zinc-800 relative group">
-                            <img src={post.imageUrl} className="w-full h-full object-cover" alt="Post" />
-                            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition">
-                                <span className="text-xs font-bold text-white flex items-center gap-1"><Heart size={10} fill="white"/> {post.likes.length}</span>
-                            </div>
-                        </div>
-                    ))}
-                </div>
-            )}
+            {myPosts.length === 0 ? (<div className="text-center py-10 text-zinc-600 border border-dashed border-zinc-800 rounded-xl"><p>Nenhum treino registrado.</p></div>) : (<div className="grid grid-cols-3 gap-2">{myPosts.map(post => (<div key={post.id} className="aspect-square rounded-lg overflow-hidden border border-zinc-800 relative group"><img src={post.imageUrl} className="w-full h-full object-cover" alt="Post" /><div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition"><span className="text-xs font-bold text-white flex items-center gap-1"><Heart size={10} fill="white"/> {post.likes.length}</span></div></div>))}</div>)}
         </div>
       )}
 
@@ -505,14 +497,42 @@ export default function Home() {
         <button onClick={() => setScreen("profile")} className={`flex flex-col items-center gap-1 transition ${screen === 'profile' ? 'text-green-500' : 'text-zinc-600'}`}><UserIcon size={22} /><span className="text-[10px] font-medium">Perfil</span></button>
       </nav>
 
-      {/* --- MODAL (Mantido) --- */}
       {(image || editingPost) && (
         <div className="fixed inset-0 bg-black/95 backdrop-blur-md flex items-end justify-center z-[100]">
           <div className="bg-zinc-900 w-full max-w-md rounded-t-3xl p-6 border-t border-zinc-800 shadow-2xl animate-slide-up overflow-y-auto max-h-[90vh]">
-            {/* ... Conteúdo do Modal (igual ao anterior) ... */}
             <div className="flex justify-between items-center mb-6"><h3 className="text-green-500 font-black text-xl tracking-wider uppercase italic">{editingPost ? "Editar Treino" : "Confirmar Treino"}</h3><button onClick={clearModal} className="bg-zinc-800 p-2 rounded-full text-zinc-400 hover:text-white hover:bg-zinc-700 transition"><X size={20} /></button></div>
             <div className="relative mb-6 rounded-2xl overflow-hidden border-2 border-zinc-800 shadow-lg aspect-square max-h-56 mx-auto group"><img src={image ? URL.createObjectURL(image) : editingPost?.imageUrl} className="w-full h-full object-cover" alt="Preview" /><div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent"></div></div>
+            
+            {/* DATA E HORA */}
             <div className="grid grid-cols-2 gap-3 mb-4"><div className="bg-black/50 p-3 rounded-xl border border-zinc-800 flex items-center gap-2 focus-within:border-white/50 transition"><Calendar size={18} className="text-zinc-500" /><div className="flex-1"><label className="text-zinc-500 text-[10px] uppercase font-bold block mb-0.5">Dia</label><input type="date" className="w-full bg-transparent text-white text-sm outline-none custom-date-input" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)}/></div></div><div className="bg-black/50 p-3 rounded-xl border border-zinc-800 flex items-center gap-2 focus-within:border-white/50 transition"><Clock size={18} className="text-zinc-500" /><div className="flex-1"><label className="text-zinc-500 text-[10px] uppercase font-bold block mb-0.5">Hora</label><input type="time" className="w-full bg-transparent text-white text-sm outline-none custom-time-input" value={selectedTime} onChange={(e) => setSelectedTime(e.target.value)}/></div></div></div>
+            
+            {/* INPUTS DE EXERCÍCIOS (NOVO) */}
+            <div className="mb-6 bg-zinc-950/50 p-4 rounded-xl border border-zinc-800">
+                <h4 className="text-zinc-400 font-bold text-xs uppercase mb-3 flex items-center gap-2"><Dumbbell size={14}/> Montar Treino</h4>
+                <div className="grid grid-cols-4 gap-2 mb-2">
+                     <input placeholder="Exercício" className="col-span-4 bg-zinc-900 rounded-lg p-2 text-xs text-white border border-zinc-800" value={exName} onChange={(e) => setExName(e.target.value)} />
+                     <input placeholder="Séries" type="number" className="bg-zinc-900 rounded-lg p-2 text-xs text-white border border-zinc-800" value={exSets} onChange={(e) => setExSets(e.target.value)} />
+                     <input placeholder="Reps" type="number" className="bg-zinc-900 rounded-lg p-2 text-xs text-white border border-zinc-800" value={exReps} onChange={(e) => setExReps(e.target.value)} />
+                     <input placeholder="Kg" type="number" className="bg-zinc-900 rounded-lg p-2 text-xs text-white border border-zinc-800" value={exWeight} onChange={(e) => setExWeight(e.target.value)} />
+                     <input placeholder="Rest (s)" type="number" className="bg-zinc-900 rounded-lg p-2 text-xs text-white border border-zinc-800" value={exRest} onChange={(e) => setExRest(e.target.value)} />
+                </div>
+                <button onClick={addExercise} className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs py-2 rounded-lg font-bold mb-3 transition">+ Adicionar Exercício</button>
+                
+                {currentExercises.length > 0 && (
+                    <div className="space-y-1">
+                        {currentExercises.map((ex, idx) => (
+                            <div key={idx} className="flex justify-between items-center bg-zinc-900 p-2 rounded-lg border border-zinc-800/50">
+                                <div className="text-xs text-white flex gap-2">
+                                    <span className="font-bold">{idx + 1}. {ex.name}</span>
+                                    <span className="text-zinc-500">{ex.sets}x{ex.reps} - {ex.weight}kg</span>
+                                </div>
+                                <button onClick={() => removeExercise(idx)} className="text-zinc-600 hover:text-red-500"><X size={12}/></button>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+
             <div className="space-y-4 mb-6"><div className="bg-black/50 p-3 rounded-xl border border-zinc-800 flex items-center gap-3 focus-within:border-green-500 transition"><Clock size={18} className="text-zinc-500" /><div className="flex-1"><label className="text-zinc-500 text-[10px] uppercase font-bold block mb-0.5">Duração</label><input type="text" placeholder="Ex: 1h 30m" className="w-full bg-transparent text-white text-sm outline-none placeholder-zinc-600" value={duration} onChange={(e) => setDuration(e.target.value)}/></div></div><div className="flex gap-3"><div className="bg-black/50 p-3 rounded-xl border border-zinc-800 flex items-center gap-3 focus-within:border-orange-500 transition flex-1"><Flame size={18} className="text-orange-500" /><div className="flex-1"><label className="text-zinc-500 text-[10px] uppercase font-bold block mb-0.5">Calorias</label><input type="number" placeholder="Ex: 450" className="w-full bg-transparent text-white text-sm outline-none placeholder-zinc-600" value={calories} onChange={(e) => setCalories(e.target.value)}/></div></div><div className="bg-black/50 p-3 rounded-xl border border-zinc-800 flex items-center gap-3 focus-within:border-blue-500 transition flex-1"><MapPin size={18} className="text-blue-500" /><div className="flex-1"><label className="text-zinc-500 text-[10px] uppercase font-bold block mb-0.5">Distância</label><input type="text" placeholder="Ex: 5km" className="w-full bg-transparent text-white text-sm outline-none placeholder-zinc-600" value={distance} onChange={(e) => setDistance(e.target.value)}/></div></div></div>{!editingPost && (<div className="bg-black/50 p-3 rounded-xl border border-zinc-800 flex gap-3 focus-within:border-green-500 transition items-start"><AlignLeft size={18} className="text-zinc-500 mt-1" /><div className="flex-1"><label className="text-zinc-500 text-[10px] uppercase font-bold block mb-0.5">Descrição</label><textarea placeholder="Como foi o treino hoje?" rows={3} className="w-full bg-transparent text-white text-sm outline-none placeholder-zinc-600 resize-none custom-scrollbar" value={initialComment} onChange={(e) => setInitialComment(e.target.value)}/></div></div>)}</div>
             <button onClick={handleSavePost} disabled={loading} className="w-full bg-green-500 py-4 rounded-xl font-black text-black text-lg uppercase tracking-wider hover:bg-green-400 transition shadow-lg shadow-green-500/20 disabled:opacity-50 flex items-center justify-center gap-2 mb-6">{loading ? "Salvando..." : <>{editingPost ? "Atualizar Treino" : "Postar Agora"} <Flame size={20} fill="black" /></>}</button>
           </div>
