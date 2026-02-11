@@ -1,36 +1,55 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# EvoFit - Desafio Fit 2026 🏋️‍♂️🔥
 
-## Getting Started
+> "Junte-se aos seus amigos e alcance a sua melhor versão."
 
-First, run the development server:
+O **EvoFit** é uma aplicação Web (PWA) social e gamificada focada em registrar treinos, competir em rankings e interagir com uma comunidade fitness fechada. Desenvolvido para funcionar nativamente em celulares (iOS e Android) através do navegador.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## 📱 Funcionalidades Principais
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 🏋️‍♂️ Registro de Treinos (Workout Log)
+* **Postagens Visuais:** Compartilhe fotos do seu treino.
+* **Dados Detalhados:** Registre duração, calorias, distância.
+* **Ficha Técnica:** Adicione exercícios detalhados (Séries, Repetições, Carga e Descanso).
+* **Templates Inteligentes:** Salve suas rotinas favoritas e carregue-as com um clique para ganhar tempo.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 🏆 Gamificação e Competição
+* **Ranking:** Dispute o topo da tabela. Filtros para **Ranking Geral** e **Ranking Semanal** (reset toda segunda-feira).
+* **Sistema de Medalhas:** Desbloqueie conquistas automáticas (Ex: 🚀 Iniciante, 🔥 Fogo Puro, 🦉 Corujão).
+* **Ofensiva (Streak):** Mantenha a chama acesa treinando dias consecutivos. Um contador de fogo aparece no seu perfil e no feed.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### 💬 Comunidade e Chat
+* **Feed Social:** Curta e comente nos treinos dos amigos.
+* **Chat em Tempo Real:** Converse com a galera.
+* **Multimídia:** Envie fotos (shape, dieta, memes) direto no chat.
+* **Reações:** Reaja às mensagens com emojis (🔥, 💪, 😂).
 
-## Learn More
+### 👤 Perfil do Atleta
+* **Estatísticas:** Veja o total de treinos, calorias queimadas e dias restantes para o fim do desafio.
+* **Galeria:** Histórico visual de todas as fotos postadas.
+* **Edição:** Altere sua foto de perfil e nome de exibição.
 
-To learn more about Next.js, take a look at the following resources:
+---
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 🛠️ Tecnologias Utilizadas
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+O projeto foi construído com as tecnologias mais modernas do ecossistema React:
 
-## Deploy on Vercel
+* **Frontend:** [Next.js 14](https://nextjs.org/) (App Router)
+* **Linguagem:** [TypeScript](https://www.typescriptlang.org/)
+* **Estilização:** [Tailwind CSS](https://tailwindcss.com/)
+* **Ícones:** [Lucide React](https://lucide.dev/)
+* **Backend & BaaS:** [Firebase](https://firebase.google.com/)
+    * **Authentication:** Google Auth (Popup Mode - Otimizado para iPhone/Safari).
+    * **Firestore:** Banco de dados NoSQL em tempo real.
+    * **Storage:** Armazenamento de imagens (Posts, Chat e Perfis).
+* **Gráficos:** Recharts.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+---
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+
+
+📝 Licença
+Este projeto está sob a licença MIT.
+
+Desenvolvido com 💪 por mim.
